@@ -7,12 +7,14 @@
 import io
 import requests
 import re
+import sys
+from datetime import datetime
 
-sub_list = [('265', u'相机')]
+sub_list = [('266', u'相册')]
 
 reply_type = [u'已收录', u'已答复', u'请补充', u'待讨论', u'确认解决']
 
-# regex to remove whitespaces
+# regex to remove whitespaces`
 white_re = re.compile(r'\s+', re.U)
 
 # regex to get page count
@@ -87,7 +89,12 @@ def scrape(sub_str, sub_name, fout):
             if_extra_points = u'是' if thread[0].find(u'加分') >= 0 else u'否'
             reply = get_reply(thread[0])
             thread_content = get_content('http://www.miui.com/' + thread_url)
-            date_time_match = re.search(date_time_re, thread_content).groups()
+            try:
+                date_time_match = re.search(date_time_re, thread_content).groups()
+            except AttributeError as e:
+                with io.open('error_page.html', 'w', encoding='utf-8') as ferr:
+                    ferr.write(thread_content)
+                print '\nhttp://www.miui.com/' + thread_url
             date_time = date_time_match[0] if date_time_match[0] else date_time_match[1]
             view_num, reply_num = grep(thread[1], view_re, reply_re)
             fout.write(','.join([date_time, sub_name, view_num, reply_num, reply,
@@ -95,7 +102,8 @@ def scrape(sub_str, sub_name, fout):
         fout.flush()
 
 if __name__ == "__main__":
-    with io.open('result.csv', 'w', encoding='utf-8') as fout:
+    fout_name = 'miui_' + '_'.join(map(lambda x: x[-1], sub_list)) + '_' + str(datetime.now().date()) + '.csv'
+    with io.open(fout_name, 'w', encoding='utf-8') as fout:
         fout.write(u'发布日期,分类,浏览数,回复数,小米回复类型,是否有附件,是否被加分,标题\n')
         for sub_str, sub_name in sub_list:
             scrape(sub_str, sub_name, fout)
