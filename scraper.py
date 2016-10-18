@@ -7,7 +7,7 @@
 import io
 import requests
 import re
-import sys
+import threading
 from datetime import datetime
 
 sub_list = [('266', u'相册')]
@@ -43,6 +43,12 @@ thread_page_re = re.compile(r'</em><ahref=\"(.+?)\"onclick', re.U)
 # regex to get post time for thread
 date_time_re = re.compile(ur'发表于 <span title=\"(\d+-\d+-\d+ \d+:\d+:\d+)\">|发表于 (\d+-\d+-\d+ \d+:\d+:\d+)</em>', re.U)
 
+# global thread content queue
+thread_queue = []
+
+# global lock for thread queue
+queue_lock = threading.Lock()
+
 
 def get_content(url):
     res = requests.get(url)
@@ -68,19 +74,37 @@ def get_reply(s):
     return u'无回复'
 
 
-def scrape(sub_str, sub_name, fout):
-    first_page = get_content('http://www.miui.com/type-38-' + sub_str + '.html')
-    if not first_page:
-        return
-    page_cnt = int(re.search(page_cnt_re, first_page).group(1))
-    print '%d pages for %s' % (page_cnt, sub_name)
+def produce():
+    for sub_str, sub_name in sub_list:
+        first_page = get_content('http://www.miui.com/type-38-' + sub_str + '.html')
+        if not first_page:
+            continue
+        page_cnt = int(re.search(page_cnt_re, first_page).group(1))
+        print '%d pages for %s' % (page_cnt, sub_name)
+        print 'page,'
+        for page_num in range(1, page_cnt + 1):
+            print '%d ' % page_num,
+            page_url = 'http://www.miui.com/forum.php?mod=forumdisplay&fid=38&typeid=' \
+                       + sub_str + '&filter=typeid&page=' + str(page_num)
+            page = get_content(page_url)
+            with queue_lock:
+                thread_queue.append(page)
+        print ''
+    with queue_lock:
+        thread_queue.append('')
 
-    print 'page',
-    for page_num in range(1, page_cnt + 1):
-        print '%d ' % page_num,
-        page_url = 'http://www.miui.com/forum.php?mod=forumdisplay&fid=38&typeid=' \
-                   + sub_str + '&filter=typeid&page=' + str(page_num)
-        page = get_content(page_url)
+
+def consume(fout):
+    while True:
+        page = None
+        queue_lock.acquire()
+        if len(thread_queue) > 0:
+            page = thread_queue.pop(0)
+        queue_lock.release()
+        if page is None:
+            continue
+        if not page:
+            break
         page = re.sub(white_re, '', page)
         threads = re.findall(thread_re, page)
         for thread in threads:
@@ -100,10 +124,13 @@ def scrape(sub_str, sub_name, fout):
             fout.write(','.join([date_time, sub_name, view_num, reply_num, reply,
                                  if_attach, if_extra_points, thread_title]) + '\n')
         fout.flush()
+    fout.close()
 
 if __name__ == "__main__":
     fout_name = 'miui_' + '_'.join(map(lambda x: x[-1], sub_list)) + '_' + str(datetime.now().date()) + '.csv'
-    with io.open(fout_name, 'w', encoding='utf-8') as fout:
-        fout.write(u'发布日期,分类,浏览数,回复数,小米回复类型,是否有附件,是否被加分,标题\n')
-        for sub_str, sub_name in sub_list:
-            scrape(sub_str, sub_name, fout)
+    fout = io.open(fout_name, 'w', encoding='utf-8')
+    fout.write(u'发布日期,分类,浏览数,回复数,小米回复类型,是否有附件,是否被加分,标题\n')
+    producer = threading.Thread(target=produce)
+    consumer = threading.Thread(target=consume, args=(fout,))
+    producer.start()
+    consumer.start()
